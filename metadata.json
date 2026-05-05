@@ -1,0 +1,5 @@
+{
+  "name": "QRBook",
+  "description": "Scan book covers for info and use AI to read book pages aloud.",
+  "requestFramePermissions": ["camera"]
+}
