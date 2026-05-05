@@ -58,6 +58,7 @@ type AIProvider = 'groq' | 'gemini';
 type AppState = 'idle' | 'scanning-cover' | 'scanning-page' | 'book-details' | 'reading';
 
 const VOICES = [
+  { id: 'Sistema', name: 'Voz do Sistema', gender: 'Diversos', style: 'Nativa (Rápida)' },
   { id: 'Kore', name: 'Kore', gender: 'Feminino', style: 'Equilibrada' },
   { id: 'Puck', name: 'Puck', gender: 'Feminino', style: 'Suave' },
   { id: 'Charon', name: 'Charon', gender: 'Masculino', style: 'Profunda' },
@@ -201,6 +202,22 @@ export default function App() {
 
   const generateSpeech = async () => {
     if (!scannedText) return;
+
+    if (voice === 'Sistema') {
+      window.speechSynthesis.cancel();
+      const fala = new SpeechSynthesisUtterance(scannedText);
+      fala.lang = "pt-BR";
+      fala.rate = speed;
+      fala.pitch = 1;
+
+      fala.onstart = () => setIsPlaying(true);
+      fala.onend = () => setIsPlaying(false);
+      fala.onerror = () => setIsPlaying(false);
+
+      window.speechSynthesis.speak(fala);
+      return;
+    }
+
     setIsLoading(true);
     try {
       const response = await fetch('/api/generate-speech', {
@@ -226,6 +243,18 @@ export default function App() {
   };
 
   const previewVoice = async (voiceId: string) => {
+    if (voiceId === 'Sistema') {
+      window.speechSynthesis.cancel();
+      const fala = new SpeechSynthesisUtterance("Olá, sou sua leitora");
+      fala.lang = "pt-BR";
+      fala.rate = speed;
+      fala.pitch = 1;
+      fala.onstart = () => { setIsPlaying(true); setVoice(voiceId); };
+      fala.onend = () => setIsPlaying(false);
+      window.speechSynthesis.speak(fala);
+      return;
+    }
+
     setIsPreviewing(true);
     setIsLoading(true);
     try {
@@ -327,10 +356,22 @@ export default function App() {
   }, [speed, audioUrl]);
 
   useEffect(() => {
-    if (isPlaying && audioRef.current) {
-      audioRef.current.play();
-    } else if (audioRef.current) {
-      audioRef.current.pause();
+    if (isPlaying) {
+      if (voice === 'Sistema') {
+        if (window.speechSynthesis.paused) {
+          window.speechSynthesis.resume();
+        } else if (!window.speechSynthesis.speaking) {
+          generateSpeech();
+        }
+      } else if (audioRef.current) {
+        audioRef.current.play().catch(console.error);
+      }
+    } else {
+      if (voice === 'Sistema') {
+        window.speechSynthesis.pause();
+      } else if (audioRef.current) {
+        audioRef.current.pause();
+      }
     }
   }, [isPlaying]);
 
@@ -918,17 +959,6 @@ export default function App() {
                 </button>
               </div>
 
-              {/* Botão de Sugestões Lado Esquerdo */}
-              <div className="fixed left-0 top-1/2 -translate-y-1/2 z-40">
-                <button 
-                  onClick={() => setShowSuggestions(true)}
-                  className="bg-black text-white py-6 px-3 rounded-r-2xl shadow-xl flex flex-col items-center gap-2 hover:pl-6 transition-all group"
-                >
-                  <Sparkles className="w-6 h-6 animate-pulse" />
-                  <span className="[writing-mode:vertical-rl] rotate-180 text-[10px] font-bold uppercase tracking-widest">Sugestões</span>
-                </button>
-              </div>
-
               {/* Botão de Chat Lado Direito */}
               <div className="fixed right-0 top-1/2 -translate-y-1/2 z-40">
                 <button 
@@ -937,44 +967,6 @@ export default function App() {
                 >
                   <MessageSquare className="w-6 h-6" />
                   <span className="[writing-mode:vertical-rl] rotate-180 text-[10px] font-bold uppercase tracking-widest">IA Chat</span>
-                </button>
-              </div>
-
-              {/* Botão de Seleção de IA (Inferior Esquerdo) */}
-              <div className="fixed bottom-8 left-8 z-40 flex flex-col items-center gap-2">
-                <AnimatePresence>
-                  {showAISelector && (
-                    <motion.div 
-                      initial={{ opacity: 0, y: 10, scale: 0.9 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: 10, scale: 0.9 }}
-                      className="bg-white border border-black/10 rounded-2xl p-2 shadow-2xl flex flex-col gap-1 mb-2"
-                    >
-                      <button 
-                         onClick={() => { setSelectedAI('groq'); setShowAISelector(false); }}
-                         className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-between gap-4 ${selectedAI === 'groq' ? 'bg-black text-white' : 'hover:bg-black/5 text-black/60'}`}
-                      >
-                        Groq (Llama 3.2)
-                        {selectedAI === 'groq' && <Zap className="w-3 h-3 text-emerald-400" />}
-                      </button>
-                      <button 
-                         onClick={() => { setSelectedAI('gemini'); setShowAISelector(false); }}
-                         className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-between gap-4 ${selectedAI === 'gemini' ? 'bg-black text-white' : 'hover:bg-black/5 text-black/60'}`}
-                      >
-                        Google Gemini
-                        {selectedAI === 'gemini' && <Zap className="w-3 h-3 text-indigo-400" />}
-                      </button>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-                <button 
-                  onClick={() => setShowAISelector(!showAISelector)}
-                  className={`w-14 h-14 bg-white border border-black/5 rounded-full shadow-lg flex items-center justify-center hover:scale-110 active:scale-95 transition-all ${showAISelector ? 'ring-2 ring-black' : ''}`}
-                >
-                  <Bot className={`w-6 h-6 ${selectedAI === 'groq' ? 'text-emerald-500' : 'text-indigo-500'}`} />
-                  <div className="absolute -top-1 -right-1 w-4 h-4 bg-black text-white text-[8px] flex items-center justify-center rounded-full font-bold">
-                    {selectedAI === 'groq' ? 'G' : 'AI'}
-                  </div>
                 </button>
               </div>
 
@@ -1076,22 +1068,72 @@ export default function App() {
                       exit={{ opacity: 0, x: 100 }}
                       className="fixed right-0 top-0 bottom-0 w-full max-w-sm bg-white shadow-2xl z-[111] flex flex-col"
                     >
-                      <div className="p-6 border-b border-black/5 flex items-center justify-between">
+                      <div className="p-6 border-b border-black/5 flex items-center justify-between bg-white sticky top-0 z-10">
                         <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-emerald-500 rounded-xl flex items-center justify-center">
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${selectedAI === 'groq' ? 'bg-emerald-500' : 'bg-indigo-500'}`}>
                             <Bot className="text-white w-6 h-6" />
                           </div>
                           <div>
-                            <h3 className="font-bold text-lg leading-tight">Groq Chat</h3>
-                            <p className="text-[10px] text-emerald-600 font-bold uppercase tracking-widest">Online • Llama 3</p>
+                            <div className="flex items-center gap-2">
+                              <h3 className="font-bold text-lg leading-tight uppercase tracking-tight">
+                                {selectedAI === 'groq' ? 'Groq Chat' : 'Gemini AI'}
+                              </h3>
+                              <button 
+                                onClick={() => setShowAISelector(!showAISelector)}
+                                className="p-1 hover:bg-black/5 rounded-md transition-colors"
+                                title="Trocar IA"
+                              >
+                                <Settings className="w-3.5 h-3.5 text-black/30" />
+                              </button>
+                            </div>
+                            <p className={`text-[10px] font-bold uppercase tracking-widest ${selectedAI === 'groq' ? 'text-emerald-600' : 'text-indigo-600'}`}>
+                              Online • {selectedAI === 'groq' ? 'Llama 3' : 'Gemini 2.0'}
+                            </p>
                           </div>
                         </div>
-                        <button 
-                          onClick={() => setShowChat(false)}
-                          className="p-2 hover:bg-black/5 rounded-full"
-                        >
-                          <X className="w-6 h-6" />
-                        </button>
+                        
+                        <div className="flex items-center gap-2">
+                          <button 
+                            onClick={() => setShowSuggestions(true)}
+                            className="p-2 hover:bg-black/5 rounded-full text-black/40 hover:text-black transition-colors"
+                            title="Sugestões"
+                          >
+                            <Sparkles className="w-5 h-5" />
+                          </button>
+                          <button 
+                            onClick={() => setShowChat(false)}
+                            className="p-2 hover:bg-black/5 rounded-full text-black/40 hover:text-black transition-colors"
+                          >
+                            <X className="w-6 h-6" />
+                          </button>
+                        </div>
+
+                        {/* AI Switcher Dropdown */}
+                        <AnimatePresence>
+                          {showAISelector && (
+                            <motion.div 
+                              initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                              animate={{ opacity: 1, y: 0, scale: 1 }}
+                              exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                              className="absolute top-full left-6 right-6 bg-white border border-black/10 rounded-2xl p-2 shadow-2xl flex flex-col gap-1 z-20 mt-[-10px]"
+                            >
+                              <button 
+                                 onClick={() => { setSelectedAI('groq'); setShowAISelector(false); }}
+                                 className={`px-4 py-3 rounded-xl text-xs font-bold transition-all flex items-center justify-between gap-4 ${selectedAI === 'groq' ? 'bg-black text-white' : 'hover:bg-black/5 text-black/60'}`}
+                              >
+                                Groq (Llama 3.2 Instant)
+                                {selectedAI === 'groq' && <Zap className="w-3 h-3 text-emerald-400" />}
+                              </button>
+                              <button 
+                                 onClick={() => { setSelectedAI('gemini'); setShowAISelector(false); }}
+                                 className={`px-4 py-3 rounded-xl text-xs font-bold transition-all flex items-center justify-between gap-4 ${selectedAI === 'gemini' ? 'bg-black text-white' : 'hover:bg-black/5 text-black/60'}`}
+                              >
+                                Google Gemini 2.0
+                                {selectedAI === 'gemini' && <Zap className="w-3 h-3 text-indigo-400" />}
+                              </button>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
                       </div>
 
                       <div className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar">
