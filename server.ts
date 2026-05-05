@@ -15,9 +15,30 @@ const PORT = 3000;
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
 
-// Initialize AI clients
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY || "" });
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
+// AI Helpers
+let _groq: Groq | null = null;
+const getGroq = () => {
+  if (!_groq) {
+    const apiKey = process.env.GROQ_API_KEY;
+    if (!apiKey) {
+      throw new Error("GROQ_API_KEY is missing. Please set it in your environment variables.");
+    }
+    _groq = new Groq({ apiKey });
+  }
+  return _groq;
+};
+
+let _ai: any | null = null;
+const getGemini = () => {
+  if (!_ai) {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error("GEMINI_API_KEY is missing. Please set it in your environment variables.");
+    }
+    _ai = new GoogleGenAI({ apiKey });
+  }
+  return _ai;
+};
 
 // API Routes
 app.post("/api/analyze-cover", async (req, res) => {
@@ -26,11 +47,11 @@ app.post("/api/analyze-cover", async (req, res) => {
     if (!imageData) return res.status(400).json({ error: "Missing image data" });
 
     const base64Data = imageData.split(',')[1];
-    
     const useGroqFirst = (provider === 'groq');
 
     const tryGroq = async () => {
-      const completion = await groq.chat.completions.create({
+      const groqClient = getGroq();
+      const completion = await groqClient.chat.completions.create({
         messages: [
           {
             role: "user",
@@ -53,7 +74,8 @@ app.post("/api/analyze-cover", async (req, res) => {
     };
 
     const tryGemini = async () => {
-      const response = await ai.models.generateContent({
+      const geminiClient = getGemini();
+      const response = await geminiClient.models.generateContent({
         model: "gemini-1.5-flash",
         contents: [
           {
@@ -71,15 +93,15 @@ app.post("/api/analyze-cover", async (req, res) => {
     if (useGroqFirst) {
       try {
         finalData = await tryGroq();
-      } catch (e) {
-        console.warn("Groq failed, falling back to Gemini", e);
+      } catch (e: any) {
+        console.warn("Groq failed, falling back to Gemini", e.message);
         finalData = await tryGemini();
       }
     } else {
       try {
         finalData = await tryGemini();
-      } catch (e) {
-        console.warn("Gemini failed, falling back to Groq", e);
+      } catch (e: any) {
+        console.warn("Gemini failed, falling back to Groq", e.message);
         finalData = await tryGroq();
       }
     }
@@ -87,7 +109,7 @@ app.post("/api/analyze-cover", async (req, res) => {
     res.json(finalData);
   } catch (err: any) {
     console.error("Analysis Error:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err.message || "Internal server error" });
   }
 });
 
@@ -100,7 +122,8 @@ app.post("/api/scan-page", async (req, res) => {
     const useGroqFirst = (provider === 'groq');
 
     const tryGroq = async () => {
-      const completion = await groq.chat.completions.create({
+      const groqClient = getGroq();
+      const completion = await groqClient.chat.completions.create({
         messages: [
           {
             role: "user",
@@ -122,7 +145,8 @@ app.post("/api/scan-page", async (req, res) => {
     };
 
     const tryGemini = async () => {
-      const response = await ai.models.generateContent({
+      const geminiClient = getGemini();
+      const response = await geminiClient.models.generateContent({
         model: "gemini-1.5-flash",
         contents: [
           {
@@ -140,15 +164,15 @@ app.post("/api/scan-page", async (req, res) => {
     if (useGroqFirst) {
       try {
         finalText = await tryGroq();
-      } catch (e) {
-        console.warn("Groq failed, falling back to Gemini", e);
+      } catch (e: any) {
+        console.warn("Groq failed, falling back to Gemini", e.message);
         finalText = await tryGemini();
       }
     } else {
       try {
         finalText = await tryGemini();
-      } catch (e) {
-        console.warn("Gemini failed, falling back to Groq", e);
+      } catch (e: any) {
+        console.warn("Gemini failed, falling back to Groq", e.message);
         finalText = await tryGroq();
       }
     }
@@ -156,7 +180,7 @@ app.post("/api/scan-page", async (req, res) => {
     res.json({ text: finalText });
   } catch (err: any) {
     console.error("Scan Error:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err.message || "Internal server error" });
   }
 });
 
@@ -167,32 +191,45 @@ app.post("/api/chat", async (req, res) => {
       return res.status(400).json({ error: "Messages are required and must be an array." });
     }
 
-    const completion = await groq.chat.completions.create({
-      messages: [
-        { 
-          role: "system", 
-          content: "Você é um assistente especialista em recomendações de livros e filmes para o app 'BookScan AI'. Seja amigável, carismático e use o idioma Português (Brasil). REGRAS: Use Markdown sempre, tópicos para listas, negrito para títulos e autores, e emojis para diversão. Estruture a resposta para ser organizada e agradável." 
-        },
-        ...messages
-      ],
-      model: "llama-3.3-70b-versatile",
-    });
+    const groqClient = getGroq();
+    
+    // Attempt to use a stable model, with a generic fallback
+    const models = ["llama-3.3-70b-versatile", "llama-3.1-70b-versatile", "llama3-70b-8192"];
+    let lastError = null;
 
-    res.json({ message: completion.choices[0]?.message?.content || "" });
+    for (const model of models) {
+      try {
+        const completion = await groqClient.chat.completions.create({
+          messages: [
+            { 
+              role: "system", 
+              content: "Você é um assistente especialista em recomendações de livros e filmes para o app 'BookScan AI'. Seja amigável, carismático e use o idioma Português (Brasil). REGRAS: Use Markdown sempre, tópicos para listas, negrito para títulos e autores, e emojis para diversão. Estruture a resposta para ser organizada e agradável." 
+            },
+            ...messages
+          ],
+          model: model,
+        });
+        return res.json({ message: completion.choices[0]?.message?.content || "" });
+      } catch (e: any) {
+        lastError = e;
+        console.warn(`Model ${model} failed, trying next...`, e.message);
+        continue;
+      }
+    }
+
+    throw lastError || new Error("All Groq models failed.");
   } catch (err: any) {
     console.error("Chat Error:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err.message || "Internal server error" });
   }
 });
 
 app.get("/api/test-groq", async (req, res) => {
   try {
-    if (!process.env.GROQ_API_KEY) {
-      return res.status(400).json({ status: "error", message: "Chave GROQ_API_KEY não configurada no ambiente." });
-    }
-    const completion = await groq.chat.completions.create({
+    const groqClient = getGroq();
+    const completion = await groqClient.chat.completions.create({
       messages: [{ role: "user", content: "Responda apenas com a palavra 'OK' se estiver funcionando." }],
-      model: "llama-3.2-11b-vision-preview",
+      model: "llama3-8b-8192", // Use a very common/cheap model for testing
     });
     res.json({ status: "success", message: completion.choices[0]?.message?.content });
   } catch (err: any) {
@@ -206,7 +243,8 @@ app.post("/api/generate-speech", async (req, res) => {
     const { text, language, voice } = req.body;
     if (!text) return res.status(400).json({ error: "Missing text" });
 
-    const response = await ai.models.generateContent({
+    const geminiClient = getGemini();
+    const response = await geminiClient.models.generateContent({
       model: "gemini-2.0-flash-exp", 
       contents: [{ parts: [{ text: `Leia o seguinte texto em ${language}: ${text}` }] }],
       config: {
@@ -220,6 +258,8 @@ app.post("/api/generate-speech", async (req, res) => {
     });
 
     const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    if (!base64Audio) throw new Error("Could not generate audio modality response.");
+    
     res.json({ audio: base64Audio });
   } catch (err: any) {
     console.error("TTS Error:", err);

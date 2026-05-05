@@ -246,13 +246,19 @@ export default function App() {
         body: JSON.stringify({ messages: [...chatMessages, userMessage] }),
       });
 
-      if (!response.ok) throw new Error('Failed to send message');
-      
       const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to send message');
+      }
+      
       setChatMessages(prev => [...prev, { role: 'assistant', content: data.message }]);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Chat Error:", err);
-      setChatMessages(prev => [...prev, { role: 'assistant', content: 'Desculpe, ocorreu um erro ao processar sua mensagem.' }]);
+      setChatMessages(prev => [...prev, { 
+        role: 'assistant', 
+        content: `❌ **Erro:** ${err.message || 'Ocorreu um erro ao processar sua mensagem.'}\n\nVerifique se a chave **GROQ_API_KEY** foi configurada corretamente no menu de Configurações.` 
+      }]);
     } finally {
       setIsChatLoading(false);
     }
