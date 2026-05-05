@@ -246,7 +246,14 @@ export default function App() {
         body: JSON.stringify({ messages: [...chatMessages, userMessage] }),
       });
 
-      const data = await response.json();
+      let data;
+      const contentType = response.headers.get("content-type");
+      if (contentType && contentType.includes("application/json")) {
+        data = await response.json();
+      } else {
+        const errorText = await response.text();
+        throw new Error(errorText || 'Erro inesperado no servidor');
+      }
       
       if (!response.ok) {
         throw new Error(data.error || 'Failed to send message');

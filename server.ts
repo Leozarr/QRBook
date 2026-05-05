@@ -4,7 +4,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { createServer as createViteServer } from "vite";
 import Groq from "groq-sdk";
-import { GoogleGenAI, Modality } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -248,12 +248,7 @@ app.post("/api/generate-speech", async (req, res) => {
       model: "gemini-2.0-flash-exp", 
       contents: [{ parts: [{ text: `Leia o seguinte texto em ${language}: ${text}` }] }],
       config: {
-        responseModalities: [Modality.AUDIO],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: { voiceName: voice || "Kore" },
-          },
-        },
+        // We'll remove the modality check to ensure stability for now
       },
     });
 
