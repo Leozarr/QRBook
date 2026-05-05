@@ -4,7 +4,6 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { GoogleGenAI, Type, Modality } from "@google/genai";
 import { 
   Camera, 
   BookOpen, 
@@ -23,9 +22,11 @@ import {
   Film,
   MessageSquare,
   BookCopy,
-  Sparkles
+  Sparkles,
+  Bot
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import ReactMarkdown from 'react-markdown';
 
 // --- Types ---
 
@@ -33,6 +34,11 @@ interface Review {
   user: string;
   comment: string;
   rating: number;
+}
+
+interface Message {
+  role: 'user' | 'assistant';
+  content: string;
 }
 
 interface BookInfo {
@@ -47,6 +53,7 @@ interface BookInfo {
   coverUrl?: string;
 }
 
+type AIProvider = 'groq' | 'gemini';
 type AppState = 'idle' | 'scanning-cover' | 'scanning-page' | 'book-details' | 'reading';
 
 const VOICES = [
@@ -69,7 +76,14 @@ const LANGUAGES = [
 export default function App() {
   const [state, setState] = useState<AppState>('idle');
   const [showSettings, setShowSettings] = useState(false);
+  const [showAISelector, setShowAISelector] = useState(false);
+  const [selectedAI, setSelectedAI] = useState<AIProvider>('groq');
+  const [testStatus, setTestStatus] = useState<{ status: 'idle' | 'loading' | 'success' | 'error', message?: string }>({ status: 'idle' });
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [showChat, setShowChat] = useState(false);
+  const [chatMessages, setChatMessages] = useState<Message[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [isChatLoading, setIsChatLoading] = useState(false);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [bookInfo, setBookInfo] = useState<BookInfo | null>(null);
@@ -86,8 +100,6 @@ export default function App() {
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
 
   // --- Camera Logic ---
 
@@ -135,47 +147,15 @@ export default function App() {
   const analyzeCover = async (imageData: string) => {
     setIsLoading(true);
     try {
-      const base64Data = imageData.split(',')[1];
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: [
-          {
-            parts: [
-              { text: "Analise esta capa de livro e retorne as seguintes informações em JSON: título, autor, nota (0-5 estrelas), sequências (se houver), uma lista de 3 críticas curtas de diferentes fontes, e se possui filme (com breve info se sim). Use o idioma do usuário (Português)." },
-              { inlineData: { mimeType: "image/jpeg", data: base64Data } }
-            ]
-          }
-        ],
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              title: { type: Type.STRING },
-              author: { type: Type.STRING },
-              rating: { type: Type.STRING },
-              sequels: { type: Type.STRING },
-              reviews: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    user: { type: Type.STRING },
-                    comment: { type: Type.STRING },
-                    rating: { type: Type.NUMBER }
-                  },
-                  required: ["user", "comment", "rating"]
-                }
-              },
-              hasMovie: { type: Type.BOOLEAN },
-              movieInfo: { type: Type.STRING }
-            },
-            required: ["title", "author", "rating", "sequels", "reviews", "hasMovie"]
-          }
-        }
+      const response = await fetch('/api/analyze-cover', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageData, provider: selectedAI }),
       });
-
-      const data = JSON.parse(response.text || '{}');
+      
+      if (!response.ok) throw new Error('Failed to analyze cover');
+      
+      const data = await response.json();
       setBookInfo(data);
       setState('book-details');
     } catch (err) {
@@ -190,20 +170,16 @@ export default function App() {
   const scanPage = async (imageData: string) => {
     setIsLoading(true);
     try {
-      const base64Data = imageData.split(',')[1];
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: [
-          {
-            parts: [
-              { text: "Extraia todo o texto visível nesta página do livro. Retorne apenas o texto puro, sem comentários." },
-              { inlineData: { mimeType: "image/jpeg", data: base64Data } }
-            ]
-          }
-        ]
+      const response = await fetch('/api/scan-page', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageData, provider: selectedAI }),
       });
 
-      setScannedText(response.text || '');
+      if (!response.ok) throw new Error('Failed to scan page');
+      
+      const data = await response.json();
+      setScannedText(data.text || '');
       setState('reading');
     } catch (err) {
       console.error("Error scanning page:", err);
@@ -218,22 +194,17 @@ export default function App() {
     if (!scannedText) return;
     setIsLoading(true);
     try {
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash-preview-tts",
-        contents: [{ parts: [{ text: `Leia o seguinte texto em ${language}: ${scannedText}` }] }],
-        config: {
-          responseModalities: [Modality.AUDIO],
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: { voiceName: voice as any },
-            },
-          },
-        },
+      const response = await fetch('/api/generate-speech', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: scannedText, language, voice }),
       });
 
-      const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-      if (base64Audio) {
-        const url = `data:audio/mp3;base64,${base64Audio}`;
+      if (!response.ok) throw new Error('Failed to generate speech');
+      
+      const data = await response.json();
+      if (data.audio) {
+        const url = `data:audio/mp3;base64,${data.audio}`;
         setAudioUrl(url);
         setIsPlaying(true);
       }
@@ -242,6 +213,48 @@ export default function App() {
       alert("Erro ao gerar áudio.");
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const testGroqConnection = async () => {
+    setTestStatus({ status: 'loading' });
+    try {
+      const response = await fetch('/api/test-groq');
+      const data = await response.json();
+      if (data.status === 'success') {
+        setTestStatus({ status: 'success', message: 'Groq Conectado! Resposta: ' + data.message });
+      } else {
+        setTestStatus({ status: 'error', message: data.message });
+      }
+    } catch (err) {
+      setTestStatus({ status: 'error', message: 'Erro ao conectar ao servidor.' });
+    }
+  };
+
+  const handleSendMessage = async () => {
+    if (!chatInput.trim() || isChatLoading) return;
+
+    const userMessage = { role: 'user' as const, content: chatInput };
+    setChatMessages(prev => [...prev, userMessage]);
+    setChatInput('');
+    setIsChatLoading(true);
+
+    try {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: [...chatMessages, userMessage] }),
+      });
+
+      if (!response.ok) throw new Error('Failed to send message');
+      
+      const data = await response.json();
+      setChatMessages(prev => [...prev, { role: 'assistant', content: data.message }]);
+    } catch (err) {
+      console.error("Chat Error:", err);
+      setChatMessages(prev => [...prev, { role: 'assistant', content: 'Desculpe, ocorreu um erro ao processar sua mensagem.' }]);
+    } finally {
+      setIsChatLoading(false);
     }
   };
 
@@ -601,6 +614,55 @@ export default function App() {
                 </button>
               </div>
 
+              {/* Botão de Chat Lado Direito */}
+              <div className="fixed right-0 top-1/2 -translate-y-1/2 z-40">
+                <button 
+                  onClick={() => setShowChat(true)}
+                  className="bg-black text-white py-6 px-3 rounded-l-2xl shadow-xl flex flex-col items-center gap-2 hover:pr-6 transition-all group"
+                >
+                  <MessageSquare className="w-6 h-6" />
+                  <span className="[writing-mode:vertical-rl] rotate-180 text-[10px] font-bold uppercase tracking-widest">IA Chat</span>
+                </button>
+              </div>
+
+              {/* Botão de Seleção de IA (Inferior Esquerdo) */}
+              <div className="fixed bottom-8 left-8 z-40 flex flex-col items-center gap-2">
+                <AnimatePresence>
+                  {showAISelector && (
+                    <motion.div 
+                      initial={{ opacity: 0, y: 10, scale: 0.9 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 10, scale: 0.9 }}
+                      className="bg-white border border-black/10 rounded-2xl p-2 shadow-2xl flex flex-col gap-1 mb-2"
+                    >
+                      <button 
+                         onClick={() => { setSelectedAI('groq'); setShowAISelector(false); }}
+                         className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-between gap-4 ${selectedAI === 'groq' ? 'bg-black text-white' : 'hover:bg-black/5 text-black/60'}`}
+                      >
+                        Groq (Llama 3.2)
+                        {selectedAI === 'groq' && <Zap className="w-3 h-3 text-emerald-400" />}
+                      </button>
+                      <button 
+                         onClick={() => { setSelectedAI('gemini'); setShowAISelector(false); }}
+                         className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-between gap-4 ${selectedAI === 'gemini' ? 'bg-black text-white' : 'hover:bg-black/5 text-black/60'}`}
+                      >
+                        Google Gemini
+                        {selectedAI === 'gemini' && <Zap className="w-3 h-3 text-indigo-400" />}
+                      </button>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+                <button 
+                  onClick={() => setShowAISelector(!showAISelector)}
+                  className={`w-14 h-14 bg-white border border-black/5 rounded-full shadow-lg flex items-center justify-center hover:scale-110 active:scale-95 transition-all ${showAISelector ? 'ring-2 ring-black' : ''}`}
+                >
+                  <Bot className={`w-6 h-6 ${selectedAI === 'groq' ? 'text-emerald-500' : 'text-indigo-500'}`} />
+                  <div className="absolute -top-1 -right-1 w-4 h-4 bg-black text-white text-[8px] flex items-center justify-center rounded-full font-bold">
+                    {selectedAI === 'groq' ? 'G' : 'AI'}
+                  </div>
+                </button>
+              </div>
+
               {/* Modal de Sugestões */}
               <AnimatePresence>
                 {showSuggestions && (
@@ -676,6 +738,112 @@ export default function App() {
                             </div>
                           ))}
                         </div>
+                      </div>
+                    </motion.div>
+                  </>
+                )}
+              </AnimatePresence>
+
+              {/* Painel de Chat Lado Direito */}
+              <AnimatePresence>
+                {showChat && (
+                  <>
+                    <motion.div 
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      onClick={() => setShowChat(false)}
+                      className="fixed inset-0 bg-black/60 backdrop-blur-md z-[110]"
+                    />
+                    <motion.div 
+                      initial={{ opacity: 0, x: 100 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: 100 }}
+                      className="fixed right-0 top-0 bottom-0 w-full max-w-sm bg-white shadow-2xl z-[111] flex flex-col"
+                    >
+                      <div className="p-6 border-b border-black/5 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-emerald-500 rounded-xl flex items-center justify-center">
+                            <Bot className="text-white w-6 h-6" />
+                          </div>
+                          <div>
+                            <h3 className="font-bold text-lg leading-tight">Groq Chat</h3>
+                            <p className="text-[10px] text-emerald-600 font-bold uppercase tracking-widest">Online • Llama 3</p>
+                          </div>
+                        </div>
+                        <button 
+                          onClick={() => setShowChat(false)}
+                          className="p-2 hover:bg-black/5 rounded-full"
+                        >
+                          <X className="w-6 h-6" />
+                        </button>
+                      </div>
+
+                      <div className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar">
+                        {chatMessages.length === 0 && (
+                          <div className="text-center py-12 space-y-2 opacity-40">
+                            <Bot className="w-12 h-12 mx-auto mb-4" />
+                            <p className="font-bold">Olá! Eu sou o assistente IA.</p>
+                            <p className="text-sm">Peça recomendações de livros ou filmes similares aos seus favoritos.</p>
+                          </div>
+                        )}
+                        {chatMessages.map((msg, idx) => (
+                          <motion.div 
+                            key={idx}
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                          >
+                            <div className={`max-w-[85%] p-4 rounded-2xl text-sm ${
+                              msg.role === 'user' 
+                                ? 'bg-black text-white rounded-br-none' 
+                                : 'bg-black/5 text-black rounded-bl-none'
+                            }`}>
+                              {msg.role === 'assistant' ? (
+                                <div className="markdown-content">
+                                  <ReactMarkdown>{msg.content}</ReactMarkdown>
+                                </div>
+                              ) : (
+                                msg.content
+                              )}
+                            </div>
+                          </motion.div>
+                        ))}
+                        {isChatLoading && (
+                          <div className="flex justify-start">
+                            <div className="bg-black/5 p-4 rounded-2xl rounded-bl-none">
+                              <div className="flex gap-1">
+                                <div className="w-1.5 h-1.5 bg-black/20 rounded-full animate-bounce" />
+                                <div className="w-1.5 h-1.5 bg-black/20 rounded-full animate-bounce [animation-delay:0.2s]" />
+                                <div className="w-1.5 h-1.5 bg-black/20 rounded-full animate-bounce [animation-delay:0.4s]" />
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="p-6 border-t border-black/5">
+                        <form 
+                          onSubmit={(e) => { e.preventDefault(); handleSendMessage(); }}
+                          className="relative"
+                        >
+                          <input 
+                            type="text" 
+                            value={chatInput}
+                            onChange={(e) => setChatInput(e.target.value)}
+                            placeholder="Pergunte sobre livros..."
+                            className="w-full bg-black/5 border-none rounded-2xl py-4 pl-6 pr-14 text-sm focus:ring-2 focus:ring-black outline-none transition-all"
+                          />
+                          <button 
+                            type="submit"
+                            disabled={!chatInput.trim() || isChatLoading}
+                            className={`absolute right-2 top-1/2 -translate-y-1/2 w-10 h-10 rounded-xl flex items-center justify-center transition-all ${
+                              chatInput.trim() && !isChatLoading ? 'bg-black text-white shadow-lg' : 'bg-black/10 text-black/20'
+                            }`}
+                          >
+                            <ChevronRight className="w-5 h-5" />
+                          </button>
+                        </form>
                       </div>
                     </motion.div>
                   </>
@@ -780,6 +948,36 @@ export default function App() {
                             onChange={(e) => setSpeed(parseFloat(e.target.value))}
                             className="w-full h-2 bg-black/5 rounded-lg appearance-none cursor-pointer accent-black"
                           />
+                        </div>
+
+                        {/* Teste de API */}
+                        <div className="pt-4 border-t border-black/5 space-y-4">
+                          <label className="text-xs font-bold uppercase tracking-widest text-black/40">Status da API Groq</label>
+                          <button 
+                            onClick={testGroqConnection}
+                            disabled={testStatus.status === 'loading'}
+                            className={`w-full py-3 rounded-xl font-bold transition-all flex items-center justify-center gap-2 border ${
+                              testStatus.status === 'success' 
+                                ? 'bg-emerald-50 border-emerald-200 text-emerald-700' 
+                                : testStatus.status === 'error'
+                                ? 'bg-red-50 border-red-200 text-red-700'
+                                : 'bg-white border-black/10 hover:bg-black/5'
+                            }`}
+                          >
+                            {testStatus.status === 'loading' ? (
+                              <div className="w-4 h-4 border-2 border-black/10 border-t-black rounded-full animate-spin" />
+                            ) : testStatus.status === 'success' ? (
+                              <Zap className="w-4 h-4" />
+                            ) : (
+                              <Sparkles className="w-4 h-4" />
+                            )}
+                            {testStatus.status === 'loading' ? 'Testando...' : 'Testar Conexão Groq'}
+                          </button>
+                          {testStatus.message && (
+                            <p className={`text-[10px] text-center font-medium ${testStatus.status === 'success' ? 'text-emerald-600' : 'text-red-600'}`}>
+                              {testStatus.message}
+                            </p>
+                          )}
                         </div>
 
                         <button 
