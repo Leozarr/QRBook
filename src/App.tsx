@@ -302,9 +302,16 @@ export default function App() {
       setChatMessages(prev => [...prev, { role: 'assistant', content: data.message }]);
     } catch (err: any) {
       console.error("Chat Error:", err);
+      const errorMessage = err.message || 'Ocorreu um erro ao processar sua mensagem.';
+      const isVercelError = errorMessage.includes('FUNCTION_INVOCATION_FAILED');
+      
       setChatMessages(prev => [...prev, { 
         role: 'assistant', 
-        content: `❌ **Erro:** ${err.message || 'Ocorreu um erro ao processar sua mensagem.'}\n\nVerifique se a chave **GROQ_API_KEY** foi configurada corretamente no menu de Configurações.` 
+        content: `❌ **Erro:** ${errorMessage}\n\n${
+          isVercelError 
+          ? 'Este erro geralmente indica um timeout ou falha de configuração no Vercel. Certifique-se de que a chave **GROQ_API_KEY** foi adicionada nas Variáveis de Ambiente do seu projeto no Dashboard do Vercel.'
+          : 'Verifique se a chave **GROQ_API_KEY** foi configurada corretamente no menu de Configurações.'
+        }` 
       }]);
     } finally {
       setIsChatLoading(false);

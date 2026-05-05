@@ -16,14 +16,19 @@ app.use(cors());
 app.use(express.json({ limit: "50mb" }));
 
 // AI Helpers
-let _groq: Groq | null = null;
+let _groq: any | null = null;
 const getGroq = () => {
   if (!_groq) {
     const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) {
+      // Return a dummy client that throws a helpful error on use, 
+      // or handle it in the getter. For now, we throw.
       throw new Error("GROQ_API_KEY is missing. Please set it in your environment variables.");
     }
-    _groq = new Groq({ apiKey });
+    _groq = new Groq({ 
+      apiKey,
+      maxRetries: 2,
+    });
   }
   return _groq;
 };
@@ -220,8 +225,8 @@ app.post("/api/chat", async (req, res) => {
 
     const groqClient = getGroq();
     
-    // Attempt to use a stable model, with a generic fallback
-    const models = ["llama-3.3-70b-versatile", "llama-3.1-70b-versatile", "llama3-70b-8192"];
+    // Use faster models first to avoid Vercel/Serverless timeouts
+    const models = ["llama-3.1-8b-instant", "llama-3.3-70b-versatile", "llama-3.2-11b-vision-preview"];
     let lastError = null;
 
     for (const model of models) {
@@ -235,6 +240,8 @@ app.post("/api/chat", async (req, res) => {
             ...messages
           ],
           model: model,
+          temperature: 0.7,
+          max_tokens: 1024,
         });
         return res.json({ message: completion.choices[0]?.message?.content || "" });
       } catch (e: any) {
@@ -256,7 +263,7 @@ app.get("/api/test-groq", async (req, res) => {
     const groqClient = getGroq();
     const completion = await groqClient.chat.completions.create({
       messages: [{ role: "user", content: "Responda apenas com a palavra 'OK' se estiver funcionando." }],
-      model: "llama3-8b-8192", // Use a very common/cheap model for testing
+      model: "llama-3.1-8b-instant", // Use a very common/cheap model for testing
     });
     res.json({ status: "success", message: completion.choices[0]?.message?.content });
   } catch (err: any) {
