@@ -26,7 +26,7 @@ import {
   Bot
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import ReactMarkdown from 'react-markdown';
+import Markdown from 'react-markdown';
 
 // --- Types ---
 
@@ -800,8 +800,8 @@ export default function App() {
                                 : 'bg-black/5 text-black rounded-bl-none'
                             }`}>
                               {msg.role === 'assistant' ? (
-                                <div className="markdown-content">
-                                  <ReactMarkdown>{msg.content}</ReactMarkdown>
+                                <div className="prose prose-sm max-w-none prose-p:leading-relaxed prose-li:my-1">
+                                  <Markdown>{msg.content}</Markdown>
                                 </div>
                               ) : (
                                 msg.content
