@@ -10,6 +10,7 @@ import {
   Info, 
   Volume2, 
   Settings, 
+  Search,
   User,
   X, 
   ChevronRight, 
@@ -81,6 +82,13 @@ export default function App() {
   const [testStatus, setTestStatus] = useState<{ status: 'idle' | 'loading' | 'success' | 'error', message?: string }>({ status: 'idle' });
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [showChat, setShowChat] = useState(false);
+  const [showAuth, setShowAuth] = useState(false);
+  const [user, setUser] = useState<{ name: string; email: string } | null>(null);
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [showMyBooks, setShowMyBooks] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
   const [chatMessages, setChatMessages] = useState<Message[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [isChatLoading, setIsChatLoading] = useState(false);
@@ -95,6 +103,7 @@ export default function App() {
   const [language, setLanguage] = useState(LANGUAGES[0].id);
   const [speed, setSpeed] = useState(1.0);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isPreviewing, setIsPreviewing] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -216,6 +225,37 @@ export default function App() {
     }
   };
 
+  const previewVoice = async (voiceId: string) => {
+    setIsPreviewing(true);
+    setIsLoading(true);
+    try {
+      const response = await fetch('/api/generate-speech', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          text: "Olá, sou sua leitora", 
+          language: 'pt-BR', 
+          voice: voiceId 
+        }),
+      });
+
+      if (!response.ok) throw new Error('Failed to generate speech');
+      
+      const data = await response.json();
+      if (data.audio) {
+        const url = `data:audio/mp3;base64,${data.audio}`;
+        setAudioUrl(url);
+        setVoice(voiceId);
+        setIsPlaying(true);
+      }
+    } catch (err) {
+      console.error("Error previewing voice:", err);
+    } finally {
+      setIsLoading(false);
+      setIsPreviewing(false);
+    }
+  };
+
   const testGroqConnection = async () => {
     setTestStatus({ status: 'loading' });
     try {
@@ -318,6 +358,26 @@ export default function App() {
     setScannedText('');
     setAudioUrl(null);
     setIsPlaying(false);
+    setSearchQuery('');
+    setSearchResults([]);
+  };
+
+  const handleSearch = async (query: string) => {
+    setSearchQuery(query);
+    if (!query.trim()) {
+      setSearchResults([]);
+      return;
+    }
+    setIsSearching(true);
+    try {
+      const response = await fetch(`/api/search-books?q=${encodeURIComponent(query)}`);
+      const data = await response.json();
+      setSearchResults(data.books || []);
+    } catch (err) {
+      console.error("Search error:", err);
+    } finally {
+      setIsSearching(false);
+    }
   };
 
   const handleSimulateJantarSecreto = () => {
@@ -491,7 +551,7 @@ export default function App() {
       setScannedText(book.sampleText);
       setState('reading');
     } else {
-      setScannedText(book.sampleText);
+      setScannedText(book.sampleText || "Texto de exemplo para áudio do livro " + book.title);
       setState('reading');
       // Trigger speech generation automatically if listening
       setTimeout(() => {
@@ -499,6 +559,7 @@ export default function App() {
       }, 500);
     }
     setShowSuggestions(false);
+    setShowMyBooks(false);
   };
 
   // --- Render Helpers ---
@@ -513,9 +574,29 @@ export default function App() {
       </div>
       <div className="flex items-center gap-2">
         {state === 'idle' ? (
-          <button className="p-2 hover:bg-black/5 rounded-full transition-colors">
-            <User className="w-6 h-6" />
-          </button>
+          user ? (
+            <div className="flex items-center gap-3">
+              <div className="text-right hidden sm:block">
+                <p className="text-[10px] font-bold text-black uppercase tracking-wider leading-tight">{user.name}</p>
+                <button 
+                  onClick={() => setUser(null)}
+                  className="text-[9px] text-red-500 font-bold uppercase tracking-widest hover:opacity-70 transition-opacity"
+                >
+                  Sair
+                </button>
+              </div>
+              <div className="w-10 h-10 bg-black/5 rounded-xl flex items-center justify-center border border-black/5">
+                <User className="w-5 h-5 text-black/60" />
+              </div>
+            </div>
+          ) : (
+            <button 
+              onClick={() => { setAuthMode('login'); setShowAuth(true); }}
+              className="p-2 hover:bg-black/5 rounded-full transition-colors"
+            >
+              <User className="w-6 h-6" />
+            </button>
+          )
         ) : (
           <button 
             onClick={reset}
@@ -530,6 +611,229 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#F9F9F9] text-black font-sans selection:bg-black selection:text-white">
+      {/* Auth Modal */}
+      <AnimatePresence>
+        {showAuth && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="bg-white rounded-3xl w-full max-w-sm overflow-hidden shadow-2xl relative"
+            >
+              <button 
+                onClick={() => setShowAuth(false)}
+                className="absolute top-6 right-6 p-2 hover:bg-black/5 rounded-full transition-colors z-10"
+              >
+                <X className="w-5 h-5 text-black/40" />
+              </button>
+
+              <div className="p-8 pb-10">
+                <div className="flex flex-col items-center mb-8">
+                  <div className="w-16 h-16 bg-black rounded-2xl flex items-center justify-center mb-4 shadow-lg">
+                    <BookCopy className="w-8 h-8 text-white" />
+                  </div>
+                  <h2 className="text-2xl font-bold text-black">
+                    {authMode === 'login' ? 'Bem-vindo' : 'Criar conta'}
+                  </h2>
+                  <p className="text-black/50 text-sm mt-1">
+                    {authMode === 'login' ? 'Acesse sua conta inteligente' : 'Junte-se ao QRBook hoje'}
+                  </p>
+                </div>
+
+                <form 
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    setUser({ name: 'Leitor Curioso', email: 'leitor@example.com' });
+                    setShowAuth(false);
+                  }}
+                  className="space-y-4"
+                >
+                  {authMode === 'register' && (
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-black/60 ml-1 uppercase tracking-wider">Nome</label>
+                      <input type="text" required placeholder="Como te chamamos?" className="w-full px-5 py-3.5 bg-black/5 rounded-2xl outline-none focus:ring-2 focus:ring-black placeholder:text-black/30 transition-all font-medium" />
+                    </div>
+                  )}
+                  
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-black/60 ml-1 uppercase tracking-wider">Email</label>
+                    <input type="email" required placeholder="seu@email.com" className="w-full px-5 py-3.5 bg-black/5 rounded-2xl outline-none focus:ring-2 focus:ring-black placeholder:text-black/30 transition-all font-medium" />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-black/60 ml-1 uppercase tracking-wider">Senha</label>
+                    <input type="password" required placeholder="••••••••" className="w-full px-5 py-3.5 bg-black/5 rounded-2xl outline-none focus:ring-2 focus:ring-black placeholder:text-black/30 transition-all font-medium" />
+                  </div>
+
+                  <button type="submit" className="w-full py-4 bg-black text-white rounded-2xl font-bold hover:scale-[1.02] active:scale-95 transition-all shadow-lg mt-4">
+                    {authMode === 'login' ? 'Acessar App' : 'Criar minha conta'}
+                  </button>
+                </form>
+
+                <div className="mt-8 pt-6 border-t border-black/5 text-center">
+                  <p className="text-black/50 text-sm">
+                    {authMode === 'login' ? 'Não tem uma conta?' : 'Já possui uma conta?'}
+                    <button 
+                      onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')}
+                      className="ml-2 font-bold text-black border-b-2 border-black/10 hover:border-black transition-all"
+                    >
+                      {authMode === 'login' ? 'Cadastre-se' : 'Faça login'}
+                    </button>
+                  </p>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Meus Livros Modal */}
+      <AnimatePresence>
+        {showMyBooks && (
+          <>
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowMyBooks(false)}
+              className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[110]"
+            />
+            <motion.div 
+              initial={{ opacity: 0, y: 100 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 100 }}
+              className="fixed bottom-0 left-0 right-0 max-h-[80vh] bg-white rounded-t-[40px] shadow-2xl z-[111] overflow-hidden"
+            >
+              <div className="p-8 pb-12">
+                <div className="flex items-center justify-between mb-8">
+                  <div className="flex-1 mr-4">
+                    <h3 className="text-2xl font-bold tracking-tight">Ouvir Livro</h3>
+                    <p className="text-black/50 text-sm">Pesquise ou selecione um livro</p>
+                  </div>
+                  <button 
+                    onClick={() => setShowMyBooks(false)}
+                    className="p-2 hover:bg-black/5 rounded-full transition-colors"
+                  >
+                    <X className="w-6 h-6 text-black/40" />
+                  </button>
+                </div>
+
+                <div className="mb-8 relative">
+                  <div className="absolute left-5 top-1/2 -translate-y-1/2 text-black/30">
+                    <Search className="w-5 h-5" />
+                  </div>
+                  <input 
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => handleSearch(e.target.value)}
+                    placeholder="Pesquisar por título ou autor..."
+                    className="w-full pl-14 pr-6 py-4 bg-black/5 rounded-2xl outline-none focus:ring-2 focus:ring-black placeholder:text-black/30 transition-all font-medium"
+                  />
+                  {isSearching && (
+                    <div className="absolute right-5 top-1/2 -translate-y-1/2">
+                      <div className="w-4 h-4 border-2 border-black/10 border-t-black rounded-full animate-spin" />
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-h-[45vh] overflow-y-auto pr-2 custom-scrollbar">
+                  {searchResults.length > 0 ? (
+                    searchResults.map((book, idx) => (
+                      <button 
+                        key={book.id || idx}
+                        onClick={() => handleSelectSuggestion(book as any, 'listen')}
+                        className="flex items-center gap-4 p-4 rounded-2xl bg-black/5 hover:bg-black/10 transition-all text-left group"
+                      >
+                        <div className="w-16 h-24 bg-black/10 rounded-lg overflow-hidden shadow-sm flex-shrink-0 group-hover:scale-105 transition-transform">
+                          {book.coverUrl ? (
+                            <img src={book.coverUrl} alt={book.title} className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center bg-black/5">
+                              <BookOpen className="w-6 h-6 text-black/20" />
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1 mb-1">
+                            <Star className="w-3 h-3 text-yellow-500 fill-yellow-500" />
+                            <span className="text-[10px] font-bold text-black/40">{book.rating || 'N/A'}</span>
+                          </div>
+                          <h4 className="font-bold text-black truncate">{book.title}</h4>
+                          <p className="text-xs text-black/40 truncate">{book.author}</p>
+                        </div>
+                      </button>
+                    ))
+                  ) : searchQuery.trim() && !isSearching ? (
+                    <div className="col-span-full py-12 text-center">
+                      <p className="text-black/40 font-medium">Nenhum livro encontrado para "{searchQuery}"</p>
+                    </div>
+                  ) : (
+                    <>
+                      {[
+                        {
+                          title: "Jantar Secreto",
+                          author: "Raphael Montes",
+                          coverUrl: "https://m.media-amazon.com/images/I/81vXv6+w6AL.jpg",
+                          rating: "4.6/5",
+                          sampleText: "Dante tem vinte e poucos anos, um emprego péssimo e vive num apartamento imundo em Copacabana com três amigos de infância. Eles têm planos ambiciosos, mas o dinheiro nunca parece chegar. Quando as contas apertam, eles decidem fazer algo drástico: um jantar secreto."
+                        },
+                        {
+                          title: "O Homem de Giz",
+                          author: "C.J. Tudor",
+                          coverUrl: "https://m.media-amazon.com/images/I/81+21r76N2L.jpg",
+                          rating: "4.4/5",
+                          sampleText: "Tudo começou no dia em que o parque de diversões chegou à cidade. Foi quando Eddie encontrou o Homem de Giz. Foi quando tudo mudou."
+                        }
+                      ].map((book, idx) => (
+                        <button 
+                          key={idx}
+                          onClick={() => handleSelectSuggestion(book as any, 'listen')}
+                          className="flex items-center gap-4 p-4 rounded-2xl bg-black/5 hover:bg-black/10 transition-all text-left group"
+                        >
+                          <div className="w-16 h-24 bg-black/10 rounded-lg overflow-hidden shadow-sm flex-shrink-0 group-hover:scale-105 transition-transform">
+                            <img src={book.coverUrl} alt={book.title} className="w-full h-full object-cover" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1 mb-1">
+                              <Star className="w-3 h-3 text-yellow-500 fill-yellow-500" />
+                              <span className="text-[10px] font-bold text-black/40">{book.rating}</span>
+                            </div>
+                            <h4 className="font-bold text-black truncate">{book.title}</h4>
+                            <p className="text-xs text-black/40 truncate">{book.author}</p>
+                            <div className="mt-2 flex items-center gap-2">
+                              <div className="px-2 py-1 bg-emerald-500/10 text-emerald-600 rounded-md flex items-center gap-1">
+                                <Volume2 className="w-3 h-3" />
+                                <span className="text-[10px] font-bold uppercase">Disponível</span>
+                              </div>
+                            </div>
+                          </div>
+                        </button>
+                      ))}
+                      
+                      <button 
+                        onClick={() => { setShowMyBooks(false); handleScanCover(); }}
+                        className="flex items-center justify-center gap-3 p-8 border-2 border-dashed border-black/10 rounded-2xl hover:border-black/30 hover:bg-black/[0.02] transition-all text-black/40 hover:text-black/60"
+                      >
+                        <div className="w-10 h-10 bg-black/5 rounded-full flex items-center justify-center">
+                          <Camera className="w-5 h-5" />
+                        </div>
+                        <span className="font-bold text-sm">Escaneie um novo livro</span>
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
       {renderHeader()}
 
       <main className="pt-24 pb-12 px-6 max-w-2xl mx-auto">
@@ -568,7 +872,7 @@ export default function App() {
 
                 <div className="flex gap-3">
                   <button 
-                    onClick={handleScanPage}
+                    onClick={() => setShowMyBooks(true)}
                     className="flex-1 group relative overflow-hidden bg-white border border-black/5 p-8 rounded-3xl shadow-sm hover:shadow-md transition-all flex flex-col items-start gap-4 text-left"
                   >
                     <div className="w-12 h-12 bg-emerald-500 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform">
@@ -604,15 +908,6 @@ export default function App() {
                     <p className="text-indigo-900/50">Veja como o app processa o best-seller.</p>
                   </div>
                   <ChevronRight className="absolute right-8 top-1/2 -translate-y-1/2 text-indigo-900/20 group-hover:translate-x-2 transition-transform" />
-                </button>
-              </div>
-
-              <div className="fixed bottom-8 right-8 z-40">
-                <button 
-                  onClick={() => setShowSettings(true)}
-                  className="w-14 h-14 bg-white border border-black/5 rounded-full shadow-lg flex items-center justify-center hover:scale-110 active:scale-95 transition-all"
-                >
-                  <Settings className="w-6 h-6 text-black/60" />
                 </button>
               </div>
 
@@ -925,23 +1220,41 @@ export default function App() {
                           </label>
                           <div className="space-y-2 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
                             {VOICES.map(v => (
-                              <button
-                                key={v.id}
-                                onClick={() => setVoice(v.id)}
-                                className={`w-full p-4 rounded-2xl border flex items-center justify-between transition-all ${
-                                  voice === v.id 
-                                    ? 'bg-emerald-50 border-emerald-500 ring-1 ring-emerald-500' 
-                                    : 'bg-white border-black/5 hover:border-black/20'
-                                }`}
-                              >
-                                <div className="text-left">
-                                  <div className="font-bold text-sm">{v.name}</div>
-                                  <div className="text-[10px] text-black/40 uppercase font-bold tracking-tighter">
-                                    {v.gender} • {v.style}
+                              <div key={v.id} className="flex gap-2">
+                                <button
+                                  onClick={() => setVoice(v.id)}
+                                  className={`flex-1 p-4 rounded-2xl border flex items-center justify-between transition-all ${
+                                    voice === v.id 
+                                      ? 'bg-emerald-50 border-emerald-500 ring-1 ring-emerald-500' 
+                                      : 'bg-white border-black/5 hover:border-black/20'
+                                  }`}
+                                >
+                                  <div className="text-left">
+                                    <div className="font-bold text-sm">{v.name}</div>
+                                    <div className="text-[10px] text-black/40 uppercase font-bold tracking-tighter">
+                                      {v.gender} • {v.style}
+                                    </div>
                                   </div>
-                                </div>
-                                {voice === v.id && <div className="w-2 h-2 bg-emerald-500 rounded-full" />}
-                              </button>
+                                  {voice === v.id && !isPreviewing && <div className="w-2 h-2 bg-emerald-500 rounded-full" />}
+                                </button>
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    previewVoice(v.id);
+                                  }}
+                                  disabled={isLoading}
+                                  className={`w-12 h-14 rounded-2xl flex items-center justify-center transition-all ${
+                                    isPreviewing && voice === v.id ? 'bg-black text-white shadow-lg' : 'bg-black/5 text-black/40 hover:bg-black/10'
+                                  }`}
+                                  title="Ouvir exemplo"
+                                >
+                                  {isLoading && voice === v.id && isPreviewing ? (
+                                    <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                                  ) : (
+                                    <Play className={`w-4 h-4 ${isPreviewing && voice === v.id ? 'fill-current' : ''}`} />
+                                  )}
+                                </button>
+                              </div>
                             ))}
                           </div>
                         </div>

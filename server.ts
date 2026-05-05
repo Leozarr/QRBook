@@ -41,6 +41,33 @@ const getGemini = () => {
 };
 
 // API Routes
+app.get("/api/search-books", async (req, res) => {
+  try {
+    const { q } = req.query;
+    if (!q) return res.status(400).json({ error: "Missing search query" });
+
+    const apiKey = process.env.GOOGLE_BOOKS_API_KEY;
+    const url = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q as string)}&maxResults=10${apiKey ? `&key=${apiKey}` : ""}`;
+    
+    const response = await fetch(url);
+    const data = await response.json();
+    
+    const books = data.items?.map((item: any) => ({
+      id: item.id,
+      title: item.volumeInfo.title,
+      author: item.volumeInfo.authors?.[0] || "Autor desconhecido",
+      coverUrl: item.volumeInfo.imageLinks?.thumbnail?.replace("http:", "https:"),
+      rating: item.volumeInfo.averageRating ? `${item.volumeInfo.averageRating}/5` : "N/A",
+      sampleText: item.volumeInfo.description || ""
+    })) || [];
+
+    res.json({ books });
+  } catch (err: any) {
+    console.error("Search Error:", err);
+    res.status(500).json({ error: "Erro ao buscar livros" });
+  }
+});
+
 app.post("/api/analyze-cover", async (req, res) => {
   try {
     const { imageData, provider } = req.body;
@@ -246,9 +273,14 @@ app.post("/api/generate-speech", async (req, res) => {
     const geminiClient = getGemini();
     const response = await geminiClient.models.generateContent({
       model: "gemini-2.0-flash-exp", 
-      contents: [{ parts: [{ text: `Leia o seguinte texto em ${language}: ${text}` }] }],
+      contents: [{ parts: [{ text: text }] }],
       config: {
-        // We'll remove the modality check to ensure stability for now
+        responseModalities: ["AUDIO"],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: { voiceName: voice || "Kore" },
+          },
+        },
       },
     });
 
